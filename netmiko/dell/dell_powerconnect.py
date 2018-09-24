@@ -1,14 +1,28 @@
 """Dell PowerConnect Driver."""
 from __future__ import unicode_literals
 from paramiko import SSHClient
+from paramiko.ssh_exception import BadAuthenticationType
+from netmiko import log
 import time
 from os import path
 from netmiko.cisco_base_connection import CiscoBaseConnection
 
 
 class SSHClient_noauth(SSHClient):
-    def _auth(self, username, *args):
-        self._transport.auth_none(username)
+    def _auth(self, *args):
+        # Some PowerConnect switches do not require authentication. So we
+        # first attempt to login using the "None" authentication method.
+        # If this fails we will fall back to trying the other authentication
+        # methods supported by paramiko. paramiko doesn't currently attempt to
+        # to use auth_none automatically in the client side library. There have
+        # been some pull requests to add this functionality, but they have been
+        # left unmerged for some time, e.g: https://github.com/paramiko/paramiko/pull/483
+        username = args[0]
+        try:
+            self._transport.auth_none(username)
+        except BadAuthenticationType:
+            log.debug("None authentication failed.")
+            return super(SSHClient_noauth, self)._auth(*args)
         return
 
 
@@ -57,11 +71,8 @@ class DellPowerConnectSSH(DellPowerConnectBase):
         See base_connection.py file for any updates.
         """
         # Create instance of SSHClient object
-        # If user does not provide SSH key, we use noauth
-        if not self.use_keys:
-            remote_conn_pre = SSHClient_noauth()
-        else:
-            remote_conn_pre = SSHClient()
+        # We use a patched version of SSHClient that supports noauth
+        remote_conn_pre = SSHClient_noauth()
 
         # Load host_keys for better SSH security
         if self.system_host_keys:
